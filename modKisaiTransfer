@@ -5,6 +5,7 @@ Private Const SOURCE_BOOK As String = "工事及び補助金改.xlsm"
 Private Const SOURCE_SHEET As String = "表"
 Private Const CODE_RANGE As String = "A8:A16"
 Private Const MODE_CELL As String = "A2"
+Private Const MACRO_VERSION As String = "2026-03-26-fix-fiscal-year-offset" ' ★追加: 実行中マクロ識別
 
 Public Sub 起債転記マクロ()
 
@@ -28,6 +29,9 @@ Public Sub 起債転記マクロ()
     Dim colSubject As Long, colFinalDebt As Long
     Dim colSubsidyBizBase As Long
     Dim colCompletionDate As Long   ' ★ 竣工年月日
+    Dim colCarryForwardDetail As Long   ' ★追加: 細々節（繰越明許分）
+    Dim colPaidAmount As Long           ' ★追加: 支払済額
+    Dim colFiscalYear As Long           ' ★変更: 転記元「年度」
 
     ' 転記先列（8項目）
     ' 1:I  最終債務負担額（合計）
@@ -108,17 +112,27 @@ Public Sub 起債転記マクロ()
     colFinalDebt = FindColumnByHeader(wsSource, "最終債務負担額（合計）")
     colSubsidyBizBase = FindColumnByHeader(wsSource, "補助対象額（事業費ベース）")
     colCompletionDate = FindColumnByHeader(wsSource, "竣工年月日")  ' ★追加
+    colCarryForwardDetail = FindColumnByHeader(wsSource, "細々節〔繰越明許分〕")  ' ★修正: 見出し表記を実データに合わせる
+    colPaidAmount = FindColumnByHeader(wsSource, "支払済額")  ' ★追加
+    colFiscalYear = FindColumnByHeader(wsSource, "年度")  ' ★変更（転記元見出し）
 
-    If colTransfer = 0 Or colVendor = 0 Or colContractDate = 0 Or _
-       colDebt = 0 Or colSubsidy = 0 Or colEndR = 0 Or _
-       colSubject = 0 Or colFinalDebt = 0 Or _
-       colSubsidyBizBase = 0 Or colCompletionDate = 0 Then
+    Dim missingHeaders As String  ' ★追加: 未検出見出し名
+    missingHeaders = ""
+    AppendMissingHeader missingHeaders, colTransfer, "転記"
+    AppendMissingHeader missingHeaders, colVendor, "施工業者・債権者"
+    AppendMissingHeader missingHeaders, colContractDate, "契約年月日"
+    AppendMissingHeader missingHeaders, colDebt, hdrDebt
+    AppendMissingHeader missingHeaders, colSubsidy, hdrSubsidy
+    AppendMissingHeader missingHeaders, colEndR, hdrEnd
+    AppendMissingHeader missingHeaders, colSubject, "件名"
+    AppendMissingHeader missingHeaders, colFinalDebt, "最終債務負担額（合計）"
+    AppendMissingHeader missingHeaders, colSubsidyBizBase, "補助対象額（事業費ベース）"
+    AppendMissingHeader missingHeaders, colCompletionDate, "竣工年月日"
+    AppendMissingHeader missingHeaders, colCarryForwardDetail, "細々節〔繰越明許分〕"
+    AppendMissingHeader missingHeaders, colPaidAmount, "支払済額"
+    AppendMissingHeader missingHeaders, colFiscalYear, "年度"
 
-        Err.Raise vbObjectError + 515, PROC_NAME, _
-            "必要な列が見つかりません。" & vbCrLf & _
-            "（転記／施工業者・債権者／契約年月日／" & hdrDebt & "／" & hdrSubsidy & _
-            "／" & hdrEnd & "／件名／最終債務負担額（合計）／補助対象額（事業費ベース）／竣工年月日）"
-    End If
+    ' ★変更: 未検出見出しがあっても停止しない（後で通知のみ）
 
     ' --- 転記先列 ---
     destColumns(1) = wsTarget.Columns("I").Column
@@ -136,10 +150,13 @@ Public Sub 起債転記マクロ()
     Dim searchRange As Range
     Dim lastRow As Long
 
-    lastRow = wsSource.Cells(wsSource.Rows.Count, colTransfer).End(xlUp).Row
-    If lastRow < 4 Then lastRow = 4
-
-    Set searchRange = wsSource.Range(wsSource.Cells(4, colTransfer), wsSource.Cells(lastRow, colTransfer))
+    If colTransfer > 0 Then
+        lastRow = wsSource.Cells(wsSource.Rows.Count, colTransfer).End(xlUp).Row
+        If lastRow < 4 Then lastRow = 4
+        Set searchRange = wsSource.Range(wsSource.Cells(4, colTransfer), wsSource.Cells(lastRow, colTransfer))
+    Else
+        Set searchRange = Nothing
+    End If
 
     For Each cell In rngCodes
 
@@ -153,18 +170,81 @@ Public Sub 起債転記マクロ()
             blankCount = blankCount + 1
             KD_ClearDestination wsTarget, cell.Row, destColumns
         Else
-            Set found = searchRange.Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+            Set found = Nothing
+            If Not searchRange Is Nothing Then
+                Set found = searchRange.Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+            End If
 
             If Not found Is Nothing Then
 
-                destValues(1) = wsSource.Cells(found.Row, colFinalDebt).Value
-                destValues(2) = wsSource.Cells(found.Row, colVendor).Value
-                destValues(3) = wsSource.Cells(found.Row, colContractDate).Value
-                destValues(4) = wsSource.Cells(found.Row, colEndR).Value
-                destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
-                destValues(6) = wsSource.Cells(found.Row, colCompletionDate).Value  ' ★Z列
-                destValues(7) = wsSource.Cells(found.Row, colSubject).Value
-                destValues(8) = wsSource.Cells(found.Row, colSubsidyBizBase).Value
+                ' ★変更: 各項目は「列が見つかった場合のみ」転記し、未検出時は空欄
+                If colFinalDebt > 0 Then
+                    destValues(1) = wsSource.Cells(found.Row, colFinalDebt).Value
+                Else
+                    destValues(1) = ""
+                End If
+
+                If colVendor > 0 Then
+                    destValues(2) = wsSource.Cells(found.Row, colVendor).Value
+                Else
+                    destValues(2) = ""
+                End If
+
+                If colContractDate > 0 Then
+                    destValues(3) = wsSource.Cells(found.Row, colContractDate).Value
+                Else
+                    destValues(3) = ""
+                End If
+
+                ' ★変更: 工期終期は転記元「年度」を基準に年度末補正
+                If colEndR > 0 Then
+                    If colFiscalYear > 0 Then
+                        destValues(4) = KD_ClampEndDateByFiscalYear( _
+                                        wsSource.Cells(found.Row, colEndR).Value, _
+                                        wsSource.Cells(found.Row, colFiscalYear).Value)
+                    Else
+                        destValues(4) = wsSource.Cells(found.Row, colEndR).Value
+                    End If
+                Else
+                    destValues(4) = ""
+                End If
+
+                ' ★変更: 細々節〔繰越明許分〕がある場合は支払済額を優先（要件どおり）
+                If colCarryForwardDetail > 0 And colPaidAmount > 0 Then
+                    If Len(Trim$(CStr(wsSource.Cells(found.Row, colCarryForwardDetail).Value))) > 0 Then
+                        destValues(5) = wsSource.Cells(found.Row, colPaidAmount).Value
+                    Else
+                        If colSubsidy > 0 Then
+                            destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
+                        Else
+                            destValues(5) = ""
+                        End If
+                    End If
+                Else
+                    If colSubsidy > 0 Then
+                        destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
+                    Else
+                        destValues(5) = ""
+                    End If
+                End If
+
+                If colCompletionDate > 0 Then
+                    destValues(6) = wsSource.Cells(found.Row, colCompletionDate).Value  ' ★Z列
+                Else
+                    destValues(6) = ""
+                End If
+
+                If colSubject > 0 Then
+                    destValues(7) = wsSource.Cells(found.Row, colSubject).Value
+                Else
+                    destValues(7) = ""
+                End If
+
+                If colSubsidyBizBase > 0 Then
+                    destValues(8) = wsSource.Cells(found.Row, colSubsidyBizBase).Value
+                Else
+                    destValues(8) = ""
+                End If
 
                 KD_WriteDestination wsTarget, cell.Row, destColumns, destValues
                 successCount = successCount + 1
@@ -175,10 +255,17 @@ Public Sub 起債転記マクロ()
         End If
     Next cell
 
-    MsgBox "転記完了しました。" & vbCrLf & _
+    Dim msg As String
+    msg = "転記完了しました。" & vbCrLf & _
            "成功: " & successCount & "件" & vbCrLf & _
            "空欄: " & blankCount & "件" & vbCrLf & _
-           "未該当: " & notFoundCount & "件", vbInformation, PROC_NAME
+           "未該当: " & notFoundCount & "件"
+    If Len(missingHeaders) > 0 Then
+        msg = msg & vbCrLf & _
+              "※未検出見出し（処理は継続）: " & missingHeaders
+    End If
+    msg = msg & vbCrLf & "Version: " & MACRO_VERSION  ' ★追加: 旧版/修正版の識別用
+    MsgBox msg, vbInformation, PROC_NAME
 
 ExitHandler:
     Application.ScreenUpdating = prevScreenUpdating
@@ -217,13 +304,17 @@ Private Function FindColumnByHeader(ws As Worksheet, headerName As String, _
 
     Dim r As Long, c As Long, lastCol As Long, foundCount As Long
     Dim v As Variant
+    Dim normalizedHeaderName As String  ' ★追加: 正規化済み見出し名
+
+    normalizedHeaderName = NormalizeHeaderText(headerName)  ' ★追加
 
     For r = 1 To maxHeaderRow
         lastCol = ws.Cells(r, ws.Columns.Count).End(xlToLeft).Column
         For c = 1 To lastCol
             v = ws.Cells(r, c).Value
             If Not IsError(v) Then
-                If Trim$(CStr(v)) = headerName Then
+                ' ★変更: 見出し比較は正規化後に実施
+                If NormalizeHeaderText(CStr(v)) = normalizedHeaderName Then
                     foundCount = foundCount + 1
                     If foundCount = occurrence Then
                         FindColumnByHeader = c
@@ -233,6 +324,108 @@ Private Function FindColumnByHeader(ws As Worksheet, headerName As String, _
             End If
         Next c
     Next r
+End Function
+
+
+Private Function NormalizeHeaderText(ByVal s As String) As String
+    ' ★追加: 見出し比較用の正規化
+    ' - 改行削除
+    ' - 半角/全角空白削除
+    ' - （〔［ を同一扱い
+    ' - ）〕］ を同一扱い
+    ' - 全角英数を半角化（可能な範囲で）
+    Dim t As String
+
+    t = Trim$(s)
+
+    On Error Resume Next
+    t = StrConv(t, vbNarrow)
+    On Error GoTo 0
+
+    t = Replace$(t, vbCrLf, "")
+    t = Replace$(t, vbCr, "")
+    t = Replace$(t, vbLf, "")
+    t = Replace$(t, " ", "")
+    t = Replace$(t, "　", "")
+
+    t = Replace$(t, "（", "(")
+    t = Replace$(t, "〔", "(")
+    t = Replace$(t, "［", "(")
+    t = Replace$(t, "[", "(")
+    t = Replace$(t, "）", ")")
+    t = Replace$(t, "〕", ")")
+    t = Replace$(t, "］", ")")
+    t = Replace$(t, "]", ")")
+
+    NormalizeHeaderText = UCase$(t)
+End Function
+
+
+Private Sub AppendMissingHeader(ByRef missingHeaders As String, ByVal col As Long, ByVal headerName As String)
+    ' ★追加: 未検出見出し名を連結
+    If col <> 0 Then Exit Sub
+
+    If Len(missingHeaders) > 0 Then
+        missingHeaders = missingHeaders & "／" & headerName
+    Else
+        missingHeaders = headerName
+    End If
+End Sub
+
+
+Private Function KD_ClampEndDateByFiscalYear(ByVal endValue As Variant, ByVal fiscalYearValue As Variant) As Variant
+    ' ★追加: 工期終期が年度末(3/31)を超える場合は年度末へ補正
+    Dim dtEnd As Date, dtFiscalEnd As Date
+
+    If Not IsDate(endValue) Then
+        KD_ClampEndDateByFiscalYear = endValue
+        Exit Function
+    End If
+
+    dtFiscalEnd = KD_GetFiscalYearEndDate(fiscalYearValue)
+    If dtFiscalEnd = 0 Then
+        KD_ClampEndDateByFiscalYear = endValue
+        Exit Function
+    End If
+
+    dtEnd = CDate(endValue)
+    If dtEnd > dtFiscalEnd Then
+        KD_ClampEndDateByFiscalYear = dtFiscalEnd
+    Else
+        KD_ClampEndDateByFiscalYear = dtEnd
+    End If
+End Function
+
+
+Private Function KD_GetFiscalYearEndDate(ByVal fiscalYearValue As Variant) As Date
+    ' ★追加: 「年度」(例: R7 / 令和7) から年度末日(yyyy/3/31)を返す
+    ' ★修正: 年度フラグは年度開始年として扱う（Rn -> R(n+1).3.31）
+    Dim s As String
+    Dim n As Long
+
+    If IsError(fiscalYearValue) Then Exit Function
+
+    s = Trim$(CStr(fiscalYearValue))
+    If s = "" Then Exit Function
+
+    s = UCase$(s)
+    s = Replace$(s, "年度", "")
+    s = Replace$(s, "令和", "R")
+    s = Replace$(s, "Ｒ", "R")
+    s = Replace$(s, " ", "")
+    s = Replace$(s, "　", "")
+
+    If Left$(s, 1) = "R" Then
+        s = Mid$(s, 2)
+    End If
+
+    If Not IsNumeric(s) Then Exit Function
+
+    n = CLng(Val(s))
+    If n <= 0 Then Exit Function
+
+    ' 令和n年度の年度末 = 西暦(2019 + n)年3月31日（例: R7 -> 2026/3/31）
+    KD_GetFiscalYearEndDate = DateSerial(2019 + n, 3, 31)
 End Function
 
 
@@ -290,4 +483,3 @@ Private Function KD_IsLockedByBold(ByVal tgt As Range) As Boolean
 
     KD_IsLockedByBold = False
 End Function
-
