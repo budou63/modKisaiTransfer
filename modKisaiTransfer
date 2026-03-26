@@ -111,20 +111,31 @@ Public Sub 起債転記マクロ()
     colFinalDebt = FindColumnByHeader(wsSource, "最終債務負担額（合計）")
     colSubsidyBizBase = FindColumnByHeader(wsSource, "補助対象額（事業費ベース）")
     colCompletionDate = FindColumnByHeader(wsSource, "竣工年月日")  ' ★追加
-    colCarryForwardDetail = FindColumnByHeader(wsSource, "細々節（繰越明許分）")  ' ★追加
+    colCarryForwardDetail = FindColumnByHeader(wsSource, "細々節〔繰越明許分〕")  ' ★修正: 見出し表記を実データに合わせる
     colPaidAmount = FindColumnByHeader(wsSource, "支払済額")  ' ★追加
     colFiscalYear = FindColumnByHeader(wsTarget, "年度")  ' ★追加（転記先見出し）
 
-    If colTransfer = 0 Or colVendor = 0 Or colContractDate = 0 Or _
-       colDebt = 0 Or colSubsidy = 0 Or colEndR = 0 Or _
-       colSubject = 0 Or colFinalDebt = 0 Or _
-       colSubsidyBizBase = 0 Or colCompletionDate = 0 Or _
-       colCarryForwardDetail = 0 Or colPaidAmount = 0 Or colFiscalYear = 0 Then
+    Dim missingHeaders As String  ' ★追加: 未検出見出し名
+    missingHeaders = ""
+    AppendMissingHeader missingHeaders, colTransfer, "転記"
+    AppendMissingHeader missingHeaders, colVendor, "施工業者・債権者"
+    AppendMissingHeader missingHeaders, colContractDate, "契約年月日"
+    AppendMissingHeader missingHeaders, colDebt, hdrDebt
+    AppendMissingHeader missingHeaders, colSubsidy, hdrSubsidy
+    AppendMissingHeader missingHeaders, colEndR, hdrEnd
+    AppendMissingHeader missingHeaders, colSubject, "件名"
+    AppendMissingHeader missingHeaders, colFinalDebt, "最終債務負担額（合計）"
+    AppendMissingHeader missingHeaders, colSubsidyBizBase, "補助対象額（事業費ベース）"
+    AppendMissingHeader missingHeaders, colCompletionDate, "竣工年月日"
+    AppendMissingHeader missingHeaders, colCarryForwardDetail, "細々節〔繰越明許分〕"
+    AppendMissingHeader missingHeaders, colPaidAmount, "支払済額"
+    AppendMissingHeader missingHeaders, colFiscalYear, "年度"
+
+    If Len(missingHeaders) > 0 Then
 
         Err.Raise vbObjectError + 515, PROC_NAME, _
             "必要な列が見つかりません。" & vbCrLf & _
-            "（転記／施工業者・債権者／契約年月日／" & hdrDebt & "／" & hdrSubsidy & _
-            "／" & hdrEnd & "／件名／最終債務負担額（合計）／補助対象額（事業費ベース）／竣工年月日／細々節（繰越明許分）／支払済額／年度）"
+            "未検出見出し: " & missingHeaders
     End If
 
     ' --- 転記先列 ---
@@ -233,13 +244,17 @@ Private Function FindColumnByHeader(ws As Worksheet, headerName As String, _
 
     Dim r As Long, c As Long, lastCol As Long, foundCount As Long
     Dim v As Variant
+    Dim normalizedHeaderName As String  ' ★追加: 正規化済み見出し名
+
+    normalizedHeaderName = NormalizeHeaderText(headerName)  ' ★追加
 
     For r = 1 To maxHeaderRow
         lastCol = ws.Cells(r, ws.Columns.Count).End(xlToLeft).Column
         For c = 1 To lastCol
             v = ws.Cells(r, c).Value
             If Not IsError(v) Then
-                If Trim$(CStr(v)) = headerName Then
+                ' ★変更: 見出し比較は正規化後に実施
+                If NormalizeHeaderText(CStr(v)) = normalizedHeaderName Then
                     foundCount = foundCount + 1
                     If foundCount = occurrence Then
                         FindColumnByHeader = c
@@ -250,6 +265,52 @@ Private Function FindColumnByHeader(ws As Worksheet, headerName As String, _
         Next c
     Next r
 End Function
+
+
+Private Function NormalizeHeaderText(ByVal s As String) As String
+    ' ★追加: 見出し比較用の正規化
+    ' - 改行削除
+    ' - 半角/全角空白削除
+    ' - （〔［ を同一扱い
+    ' - ）〕］ を同一扱い
+    ' - 全角英数を半角化（可能な範囲で）
+    Dim t As String
+
+    t = Trim$(s)
+
+    On Error Resume Next
+    t = StrConv(t, vbNarrow)
+    On Error GoTo 0
+
+    t = Replace$(t, vbCrLf, "")
+    t = Replace$(t, vbCr, "")
+    t = Replace$(t, vbLf, "")
+    t = Replace$(t, " ", "")
+    t = Replace$(t, "　", "")
+
+    t = Replace$(t, "（", "(")
+    t = Replace$(t, "〔", "(")
+    t = Replace$(t, "［", "(")
+    t = Replace$(t, "[", "(")
+    t = Replace$(t, "）", ")")
+    t = Replace$(t, "〕", ")")
+    t = Replace$(t, "］", ")")
+    t = Replace$(t, "]", ")")
+
+    NormalizeHeaderText = UCase$(t)
+End Function
+
+
+Private Sub AppendMissingHeader(ByRef missingHeaders As String, ByVal col As Long, ByVal headerName As String)
+    ' ★追加: 未検出見出し名を連結
+    If col <> 0 Then Exit Sub
+
+    If Len(missingHeaders) > 0 Then
+        missingHeaders = missingHeaders & "／" & headerName
+    Else
+        missingHeaders = headerName
+    End If
+End Sub
 
 
 Private Function KD_ClampEndDateByFiscalYear(ByVal endValue As Variant, ByVal fiscalYearValue As Variant) As Variant
