@@ -208,14 +208,23 @@ Public Sub 起債転記マクロ()
                     destValues(4) = ""
                 End If
 
-                ' ★変更: 細々節〔繰越明許分〕があれば支払済額を優先
-                If colCarryForwardDetail > 0 And colPaidAmount > 0 And _
-                   Len(Trim$(CStr(wsSource.Cells(found.Row, colCarryForwardDetail).Value))) > 0 Then
-                    destValues(5) = wsSource.Cells(found.Row, colPaidAmount).Value
-                ElseIf colSubsidy > 0 Then
-                    destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
+                ' ★変更: 細々節〔繰越明許分〕がある場合は支払済額を優先（要件どおり）
+                If colCarryForwardDetail > 0 And colPaidAmount > 0 Then
+                    If Len(Trim$(CStr(wsSource.Cells(found.Row, colCarryForwardDetail).Value))) > 0 Then
+                        destValues(5) = wsSource.Cells(found.Row, colPaidAmount).Value
+                    Else
+                        If colSubsidy > 0 Then
+                            destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
+                        Else
+                            destValues(5) = ""
+                        End If
+                    End If
                 Else
-                    destValues(5) = ""
+                    If colSubsidy > 0 Then
+                        destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
+                    Else
+                        destValues(5) = ""
+                    End If
                 End If
 
                 If colCompletionDate > 0 Then
