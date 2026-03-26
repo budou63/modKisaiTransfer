@@ -28,6 +28,9 @@ Public Sub 起債転記マクロ()
     Dim colSubject As Long, colFinalDebt As Long
     Dim colSubsidyBizBase As Long
     Dim colCompletionDate As Long   ' ★ 竣工年月日
+    Dim colCarryForwardDetail As Long   ' ★追加: 細々節（繰越明許分）
+    Dim colPaidAmount As Long           ' ★追加: 支払済額
+    Dim colFiscalYear As Long           ' ★追加: 転記先「年度」
 
     ' 転記先列（8項目）
     ' 1:I  最終債務負担額（合計）
@@ -108,16 +111,20 @@ Public Sub 起債転記マクロ()
     colFinalDebt = FindColumnByHeader(wsSource, "最終債務負担額（合計）")
     colSubsidyBizBase = FindColumnByHeader(wsSource, "補助対象額（事業費ベース）")
     colCompletionDate = FindColumnByHeader(wsSource, "竣工年月日")  ' ★追加
+    colCarryForwardDetail = FindColumnByHeader(wsSource, "細々節（繰越明許分）")  ' ★追加
+    colPaidAmount = FindColumnByHeader(wsSource, "支払済額")  ' ★追加
+    colFiscalYear = FindColumnByHeader(wsTarget, "年度")  ' ★追加（転記先見出し）
 
     If colTransfer = 0 Or colVendor = 0 Or colContractDate = 0 Or _
        colDebt = 0 Or colSubsidy = 0 Or colEndR = 0 Or _
        colSubject = 0 Or colFinalDebt = 0 Or _
-       colSubsidyBizBase = 0 Or colCompletionDate = 0 Then
+       colSubsidyBizBase = 0 Or colCompletionDate = 0 Or _
+       colCarryForwardDetail = 0 Or colPaidAmount = 0 Or colFiscalYear = 0 Then
 
         Err.Raise vbObjectError + 515, PROC_NAME, _
             "必要な列が見つかりません。" & vbCrLf & _
             "（転記／施工業者・債権者／契約年月日／" & hdrDebt & "／" & hdrSubsidy & _
-            "／" & hdrEnd & "／件名／最終債務負担額（合計）／補助対象額（事業費ベース）／竣工年月日）"
+            "／" & hdrEnd & "／件名／最終債務負担額（合計）／補助対象額（事業費ベース）／竣工年月日／細々節（繰越明許分）／支払済額／年度）"
     End If
 
     ' --- 転記先列 ---
@@ -160,8 +167,17 @@ Public Sub 起債転記マクロ()
                 destValues(1) = wsSource.Cells(found.Row, colFinalDebt).Value
                 destValues(2) = wsSource.Cells(found.Row, colVendor).Value
                 destValues(3) = wsSource.Cells(found.Row, colContractDate).Value
-                destValues(4) = wsSource.Cells(found.Row, colEndR).Value
-                destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
+                ' ★変更①: 工期終期(終/終2)は年度末(3/31)を上限に補正
+                destValues(4) = KD_ClampEndDateByFiscalYear( _
+                                wsSource.Cells(found.Row, colEndR).Value, _
+                                KD_AnchorCell(wsTarget, cell.Row, colFiscalYear).Value)
+
+                ' ★変更②: 細々節（繰越明許分）に値がある場合は支払済額をX列へ
+                If Len(Trim$(CStr(wsSource.Cells(found.Row, colCarryForwardDetail).Value))) > 0 Then
+                    destValues(5) = wsSource.Cells(found.Row, colPaidAmount).Value
+                Else
+                    destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
+                End If
                 destValues(6) = wsSource.Cells(found.Row, colCompletionDate).Value  ' ★Z列
                 destValues(7) = wsSource.Cells(found.Row, colSubject).Value
                 destValues(8) = wsSource.Cells(found.Row, colSubsidyBizBase).Value
@@ -236,6 +252,61 @@ Private Function FindColumnByHeader(ws As Worksheet, headerName As String, _
 End Function
 
 
+Private Function KD_ClampEndDateByFiscalYear(ByVal endValue As Variant, ByVal fiscalYearValue As Variant) As Variant
+    ' ★追加: 工期終期が年度末(3/31)を超える場合は年度末へ補正
+    Dim dtEnd As Date, dtFiscalEnd As Date
+
+    If Not IsDate(endValue) Then
+        KD_ClampEndDateByFiscalYear = endValue
+        Exit Function
+    End If
+
+    dtFiscalEnd = KD_GetFiscalYearEndDate(fiscalYearValue)
+    If dtFiscalEnd = 0 Then
+        KD_ClampEndDateByFiscalYear = endValue
+        Exit Function
+    End If
+
+    dtEnd = CDate(endValue)
+    If dtEnd > dtFiscalEnd Then
+        KD_ClampEndDateByFiscalYear = dtFiscalEnd
+    Else
+        KD_ClampEndDateByFiscalYear = dtEnd
+    End If
+End Function
+
+
+Private Function KD_GetFiscalYearEndDate(ByVal fiscalYearValue As Variant) As Date
+    ' ★追加: 「年度」(例: R7 / 令和7) から年度末日(yyyy/3/31)を返す
+    Dim s As String
+    Dim n As Long
+
+    If IsError(fiscalYearValue) Then Exit Function
+
+    s = Trim$(CStr(fiscalYearValue))
+    If s = "" Then Exit Function
+
+    s = UCase$(s)
+    s = Replace$(s, "年度", "")
+    s = Replace$(s, "令和", "R")
+    s = Replace$(s, "Ｒ", "R")
+    s = Replace$(s, " ", "")
+    s = Replace$(s, "　", "")
+
+    If Left$(s, 1) = "R" Then
+        s = Mid$(s, 2)
+    End If
+
+    If Not IsNumeric(s) Then Exit Function
+
+    n = CLng(Val(s))
+    If n <= 0 Then Exit Function
+
+    ' 令和n年度の年度末 = 西暦(2018 + n)年3月31日（例: R7 -> 2026/3/31）
+    KD_GetFiscalYearEndDate = DateSerial(2018 + n, 3, 31)
+End Function
+
+
 Private Sub KD_ClearDestination(ByVal ws As Worksheet, ByVal targetRow As Long, ByRef destColumns() As Long)
     Dim i As Long, tgt As Range
     For i = LBound(destColumns) To UBound(destColumns)
@@ -290,4 +361,3 @@ Private Function KD_IsLockedByBold(ByVal tgt As Range) As Boolean
 
     KD_IsLockedByBold = False
 End Function
-
