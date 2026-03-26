@@ -5,6 +5,7 @@ Private Const SOURCE_BOOK As String = "工事及び補助金改.xlsm"
 Private Const SOURCE_SHEET As String = "表"
 Private Const CODE_RANGE As String = "A8:A16"
 Private Const MODE_CELL As String = "A2"
+Private Const MACRO_VERSION As String = "2026-03-26-fix-end-clamp-paid-switch" ' ★追加: 実行中マクロ識別
 
 Public Sub 起債転記マクロ()
 
@@ -263,6 +264,7 @@ Public Sub 起債転記マクロ()
         msg = msg & vbCrLf & _
               "※未検出見出し（処理は継続）: " & missingHeaders
     End If
+    msg = msg & vbCrLf & "Version: " & MACRO_VERSION  ' ★追加: 旧版/修正版の識別用
     MsgBox msg, vbInformation, PROC_NAME
 
 ExitHandler:
