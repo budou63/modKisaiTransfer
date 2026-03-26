@@ -5,7 +5,7 @@ Private Const SOURCE_BOOK As String = "工事及び補助金改.xlsm"
 Private Const SOURCE_SHEET As String = "表"
 Private Const CODE_RANGE As String = "A8:A16"
 Private Const MODE_CELL As String = "A2"
-Private Const MACRO_VERSION As String = "2026-03-26-fix-end-clamp-paid-switch" ' ★追加: 実行中マクロ識別
+Private Const MACRO_VERSION As String = "2026-03-26-fix-source-fiscal-year" ' ★追加: 実行中マクロ識別
 
 Public Sub 起債転記マクロ()
 
@@ -31,7 +31,7 @@ Public Sub 起債転記マクロ()
     Dim colCompletionDate As Long   ' ★ 竣工年月日
     Dim colCarryForwardDetail As Long   ' ★追加: 細々節（繰越明許分）
     Dim colPaidAmount As Long           ' ★追加: 支払済額
-    Dim colFiscalYear As Long           ' ★追加: 転記先「年度」
+    Dim colFiscalYear As Long           ' ★変更: 転記元「年度」
 
     ' 転記先列（8項目）
     ' 1:I  最終債務負担額（合計）
@@ -114,7 +114,7 @@ Public Sub 起債転記マクロ()
     colCompletionDate = FindColumnByHeader(wsSource, "竣工年月日")  ' ★追加
     colCarryForwardDetail = FindColumnByHeader(wsSource, "細々節〔繰越明許分〕")  ' ★修正: 見出し表記を実データに合わせる
     colPaidAmount = FindColumnByHeader(wsSource, "支払済額")  ' ★追加
-    colFiscalYear = FindColumnByHeader(wsTarget, "年度")  ' ★追加（転記先見出し）
+    colFiscalYear = FindColumnByHeader(wsSource, "年度")  ' ★変更（転記元見出し）
 
     Dim missingHeaders As String  ' ★追加: 未検出見出し名
     missingHeaders = ""
@@ -196,12 +196,12 @@ Public Sub 起債転記マクロ()
                     destValues(3) = ""
                 End If
 
-                ' ★変更: 工期終期は「終列がある場合のみ」、年度列があれば補正・なければそのまま
+                ' ★変更: 工期終期は転記元「年度」を基準に年度末補正
                 If colEndR > 0 Then
                     If colFiscalYear > 0 Then
                         destValues(4) = KD_ClampEndDateByFiscalYear( _
                                         wsSource.Cells(found.Row, colEndR).Value, _
-                                        KD_AnchorCell(wsTarget, cell.Row, colFiscalYear).Value)
+                                        wsSource.Cells(found.Row, colFiscalYear).Value)
                     Else
                         destValues(4) = wsSource.Cells(found.Row, colEndR).Value
                     End If
