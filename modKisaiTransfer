@@ -1,0 +1,293 @@
+Option Explicit
+
+Private Const PROC_NAME As String = "起債転記マクロ"
+Private Const SOURCE_BOOK As String = "工事及び補助金改.xlsm"
+Private Const SOURCE_SHEET As String = "表"
+Private Const CODE_RANGE As String = "A8:A16"
+Private Const MODE_CELL As String = "A2"
+
+Public Sub 起債転記マクロ()
+
+    Dim wsTarget As Worksheet
+    Dim rngCodes As Range
+    Dim wbSource As Workbook
+    Dim wsSource As Worksheet
+    Dim modeValue As String
+
+    Dim prevScreenUpdating As Boolean
+    Dim prevEnableEvents As Boolean
+    Dim prevCalc As XlCalculation
+
+    Dim successCount As Long
+    Dim notFoundCount As Long
+    Dim blankCount As Long
+
+    ' 転記元列
+    Dim colTransfer As Long, colVendor As Long, colContractDate As Long
+    Dim colDebt As Long, colSubsidy As Long, colEndR As Long
+    Dim colSubject As Long, colFinalDebt As Long
+    Dim colSubsidyBizBase As Long
+    Dim colCompletionDate As Long   ' ★ 竣工年月日
+
+    ' 転記先列（8項目）
+    ' 1:I  最終債務負担額（合計）
+    ' 2:K  施工業者・債権者
+    ' 3:L  契約年月日
+    ' 4:R  終／終2
+    ' 5:X  補助対象額／補助対象額2
+    ' 6:Z  竣工年月日
+    ' 7:AH 件名
+    ' 8:AI 補助対象額（事業費ベース）
+    Dim destColumns(1 To 8) As Long
+
+    On Error GoTo ErrHandler
+
+    Set wsTarget = ActiveSheet
+
+    prevScreenUpdating = Application.ScreenUpdating
+    prevEnableEvents = Application.EnableEvents
+    prevCalc = Application.Calculation
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    ' --- AJ1 に実行日（結合セル対応） ---
+    With wsTarget.Range("AJ1").MergeArea.Cells(1, 1)
+        .Value = Date
+        .NumberFormatLocal = "yyyy/m/d"
+    End With
+
+    Set rngCodes = wsTarget.Range(CODE_RANGE)
+
+    ' --- A2チェック ---
+    If IsError(wsTarget.Range(MODE_CELL).Value) Then
+        MsgBox "セルA2にエラー値が含まれています。", vbExclamation, PROC_NAME
+        GoTo ExitHandler
+    End If
+    modeValue = Trim$(CStr(wsTarget.Range(MODE_CELL).Value))
+
+    If modeValue <> "現年" And modeValue <> "繰越" Then
+        MsgBox "セルA2に「現年」または「繰越」を入力してください。", vbExclamation, PROC_NAME
+        GoTo ExitHandler
+    End If
+
+    ' --- 転記元ブック ---
+    Set wbSource = GetSourceWorkbook()
+    If wbSource Is Nothing Then
+        Err.Raise vbObjectError + 513, PROC_NAME, "転記元ブックを開けませんでした。"
+    End If
+
+    On Error Resume Next
+    Set wsSource = wbSource.Worksheets(SOURCE_SHEET)
+    On Error GoTo ErrHandler
+    If wsSource Is Nothing Then
+        Err.Raise vbObjectError + 514, PROC_NAME, "転記元シート「" & SOURCE_SHEET & "」が見つかりません。"
+    End If
+
+    ' --- モード別見出し ---
+    Dim hdrDebt As String, hdrSubsidy As String, hdrEnd As String
+    If modeValue = "現年" Then
+        hdrDebt = "債務負担額"
+        hdrSubsidy = "補助対象額"
+        hdrEnd = "終"
+    Else
+        hdrDebt = "債務負担額2"
+        hdrSubsidy = "補助対象額2"
+        hdrEnd = "終2"
+    End If
+
+    ' --- 転記元列特定 ---
+    colTransfer = FindColumnByHeader(wsSource, "転記")
+    colVendor = FindColumnByHeader(wsSource, "施工業者・債権者")
+    colContractDate = FindColumnByHeader(wsSource, "契約年月日")
+    colDebt = FindColumnByHeader(wsSource, hdrDebt)
+    colSubsidy = FindColumnByHeader(wsSource, hdrSubsidy)
+    colEndR = FindColumnByHeader(wsSource, hdrEnd)
+    colSubject = FindColumnByHeader(wsSource, "件名")
+    colFinalDebt = FindColumnByHeader(wsSource, "最終債務負担額（合計）")
+    colSubsidyBizBase = FindColumnByHeader(wsSource, "補助対象額（事業費ベース）")
+    colCompletionDate = FindColumnByHeader(wsSource, "竣工年月日")  ' ★追加
+
+    If colTransfer = 0 Or colVendor = 0 Or colContractDate = 0 Or _
+       colDebt = 0 Or colSubsidy = 0 Or colEndR = 0 Or _
+       colSubject = 0 Or colFinalDebt = 0 Or _
+       colSubsidyBizBase = 0 Or colCompletionDate = 0 Then
+
+        Err.Raise vbObjectError + 515, PROC_NAME, _
+            "必要な列が見つかりません。" & vbCrLf & _
+            "（転記／施工業者・債権者／契約年月日／" & hdrDebt & "／" & hdrSubsidy & _
+            "／" & hdrEnd & "／件名／最終債務負担額（合計）／補助対象額（事業費ベース）／竣工年月日）"
+    End If
+
+    ' --- 転記先列 ---
+    destColumns(1) = wsTarget.Columns("I").Column
+    destColumns(2) = wsTarget.Columns("K").Column
+    destColumns(3) = wsTarget.Columns("L").Column
+    destColumns(4) = wsTarget.Columns("R").Column
+    destColumns(5) = wsTarget.Columns("X").Column
+    destColumns(6) = wsTarget.Columns("Z").Column  ' ★ 竣工年月日
+    destColumns(7) = wsTarget.Columns("AH").Column
+    destColumns(8) = wsTarget.Columns("AI").Column
+
+    Dim cell As Range, found As Range
+    Dim code As String
+    Dim destValues(1 To 8) As Variant
+    Dim searchRange As Range
+    Dim lastRow As Long
+
+    lastRow = wsSource.Cells(wsSource.Rows.Count, colTransfer).End(xlUp).Row
+    If lastRow < 4 Then lastRow = 4
+
+    Set searchRange = wsSource.Range(wsSource.Cells(4, colTransfer), wsSource.Cells(lastRow, colTransfer))
+
+    For Each cell In rngCodes
+
+        If IsError(cell.Value) Then
+            code = ""
+        Else
+            code = Trim$(CStr(cell.Value))
+        End If
+
+        If code = "" Then
+            blankCount = blankCount + 1
+            KD_ClearDestination wsTarget, cell.Row, destColumns
+        Else
+            Set found = searchRange.Find(What:=code, LookIn:=xlValues, LookAt:=xlWhole)
+
+            If Not found Is Nothing Then
+
+                destValues(1) = wsSource.Cells(found.Row, colFinalDebt).Value
+                destValues(2) = wsSource.Cells(found.Row, colVendor).Value
+                destValues(3) = wsSource.Cells(found.Row, colContractDate).Value
+                destValues(4) = wsSource.Cells(found.Row, colEndR).Value
+                destValues(5) = wsSource.Cells(found.Row, colSubsidy).Value
+                destValues(6) = wsSource.Cells(found.Row, colCompletionDate).Value  ' ★Z列
+                destValues(7) = wsSource.Cells(found.Row, colSubject).Value
+                destValues(8) = wsSource.Cells(found.Row, colSubsidyBizBase).Value
+
+                KD_WriteDestination wsTarget, cell.Row, destColumns, destValues
+                successCount = successCount + 1
+            Else
+                KD_ClearDestination wsTarget, cell.Row, destColumns
+                notFoundCount = notFoundCount + 1
+            End If
+        End If
+    Next cell
+
+    MsgBox "転記完了しました。" & vbCrLf & _
+           "成功: " & successCount & "件" & vbCrLf & _
+           "空欄: " & blankCount & "件" & vbCrLf & _
+           "未該当: " & notFoundCount & "件", vbInformation, PROC_NAME
+
+ExitHandler:
+    Application.ScreenUpdating = prevScreenUpdating
+    Application.EnableEvents = prevEnableEvents
+    Application.Calculation = prevCalc
+    Exit Sub
+
+ErrHandler:
+    MsgBox PROC_NAME & " でエラーが発生しました。" & vbCrLf & _
+           "Err " & Err.Number & ": " & Err.Description, vbExclamation, PROC_NAME
+    Resume ExitHandler
+End Sub
+
+
+Public Function GetSourceWorkbook() As Workbook
+    Dim wb As Workbook
+    On Error Resume Next
+    Set wb = Workbooks(SOURCE_BOOK)
+    On Error GoTo 0
+
+    If wb Is Nothing Then
+        Dim bookPath As String
+        If Len(ThisWorkbook.Path) = 0 Then Exit Function
+        bookPath = ThisWorkbook.Path & Application.PathSeparator & SOURCE_BOOK
+        On Error Resume Next
+        Set wb = Workbooks.Open(bookPath)
+        On Error GoTo 0
+    End If
+
+    Set GetSourceWorkbook = wb
+End Function
+
+
+Private Function FindColumnByHeader(ws As Worksheet, headerName As String, _
+    Optional occurrence As Long = 1, Optional maxHeaderRow As Long = 20) As Long
+
+    Dim r As Long, c As Long, lastCol As Long, foundCount As Long
+    Dim v As Variant
+
+    For r = 1 To maxHeaderRow
+        lastCol = ws.Cells(r, ws.Columns.Count).End(xlToLeft).Column
+        For c = 1 To lastCol
+            v = ws.Cells(r, c).Value
+            If Not IsError(v) Then
+                If Trim$(CStr(v)) = headerName Then
+                    foundCount = foundCount + 1
+                    If foundCount = occurrence Then
+                        FindColumnByHeader = c
+                        Exit Function
+                    End If
+                End If
+            End If
+        Next c
+    Next r
+End Function
+
+
+Private Sub KD_ClearDestination(ByVal ws As Worksheet, ByVal targetRow As Long, ByRef destColumns() As Long)
+    Dim i As Long, tgt As Range
+    For i = LBound(destColumns) To UBound(destColumns)
+        Set tgt = ws.Cells(targetRow, destColumns(i))
+        If tgt.MergeCells Then Set tgt = tgt.MergeArea
+        If Not KD_IsLockedByBold(tgt) Then
+            On Error Resume Next
+            tgt.ClearContents
+            On Error GoTo 0
+        End If
+    Next i
+End Sub
+
+
+Private Sub KD_WriteDestination(ByVal ws As Worksheet, ByVal targetRow As Long, _
+                               ByRef destColumns() As Long, ByRef destValues() As Variant)
+    Dim i As Long, tgt As Range
+    For i = LBound(destColumns) To UBound(destColumns)
+        Set tgt = KD_AnchorCell(ws, targetRow, destColumns(i))
+        If Not KD_IsLockedByBold(tgt) Then
+            On Error Resume Next
+            tgt.Value = destValues(i)
+            On Error GoTo 0
+        End If
+    Next i
+End Sub
+
+
+Private Function KD_AnchorCell(ByVal ws As Worksheet, ByVal r As Long, ByVal c As Long) As Range
+    Dim tgt As Range
+    Set tgt = ws.Cells(r, c)
+    If tgt.MergeCells Then
+        Set KD_AnchorCell = tgt.MergeArea.Cells(1, 1)
+    Else
+        Set KD_AnchorCell = tgt
+    End If
+End Function
+
+
+Private Function KD_IsLockedByBold(ByVal tgt As Range) As Boolean
+    If IsError(tgt.Value) Then
+        KD_IsLockedByBold = False
+        Exit Function
+    End If
+
+    If Len(Trim$(CStr(tgt.Value))) > 0 Then
+        If tgt.Font.Bold Then
+            KD_IsLockedByBold = True
+            Exit Function
+        End If
+    End If
+
+    KD_IsLockedByBold = False
+End Function
+
